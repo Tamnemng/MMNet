@@ -11,9 +11,12 @@ from torchlight import str2bool
 
 class REC_Processor(Processor):
     def load_model(self):
+        # Load model từ config
         self.model = self.io.load_model(self.arg.model, **self.arg.model_args)
-        self.model = self.model.cuda(self.output_device)
-        self.loss = nn.CrossEntropyLoss().cuda(self.output_device)
+        
+        # Định nghĩa Loss function
+        # Không cần .cuda() ở đây, class cha sẽ tự chuyển sang GPU sau
+        self.loss = nn.CrossEntropyLoss()
 
     def load_optimizer(self):
         if self.arg.optimizer == 'SGD':
@@ -44,8 +47,9 @@ class REC_Processor(Processor):
 
         # Tqdm để hiện thanh tiến trình
         for data, label, _ in tqdm(loader, desc=f'Epoch {self.epoch+1}'):
-            data = data.float().cuda(self.output_device)
-            label = label.long().cuda(self.output_device)
+            # SỬA LỖI: Dùng self.dev thay vì self.output_device
+            data = data.float().to(self.dev)
+            label = label.long().to(self.dev)
 
             output = self.model(data)
             loss = self.loss(output, label)
@@ -67,8 +71,9 @@ class REC_Processor(Processor):
 
         with torch.no_grad():
             for data, label, _ in tqdm(loader, desc='Evaluation'):
-                data = data.float().cuda(self.output_device)
-                label = label.long().cuda(self.output_device)
+                # SỬA LỖI: Dùng self.dev thay vì self.output_device
+                data = data.float().to(self.dev)
+                label = label.long().to(self.dev)
 
                 output = self.model(data)
                 loss = self.loss(output, label)
@@ -90,9 +95,13 @@ class REC_Processor(Processor):
     def start(self):
         self.io.print_log(f'Parameters:\n{str(vars(self.arg))}')
         self.io.print_log(f'Work dir: {self.arg.work_dir}')
+        
+        # Thứ tự quan trọng: Load Model -> Load Weights -> Move to GPU -> Load Data -> Load Optimizer
         self.load_model()
-        self.load_optimizer()
+        self.load_weights()
+        self.gpu() # Class cha (Processor/IO) sẽ chuyển model & loss sang self.dev tại đây
         self.load_data()
+        self.load_optimizer()
         
         for epoch in range(self.arg.start_epoch, self.arg.num_epoch):
             self.epoch = epoch
@@ -102,15 +111,12 @@ class REC_Processor(Processor):
 
     @staticmethod
     def get_parser(add_help=False):
-        # Kế thừa parser từ class cha để có các tham số cơ bản (work_dir, config...)
         parent_parser = Processor.get_parser(add_help=False)
         parser = argparse.ArgumentParser(
             add_help=add_help,
             parents=[parent_parser],
             description='ResNet Only Processor')
 
-        # --- ĐÂY LÀ PHẦN QUAN TRỌNG BẠN ĐANG THIẾU ---
-        # Đăng ký các tham số huấn luyện (để khớp với file config)
         parser.add_argument('--base_lr', type=float, default=0.01, help='initial learning rate')
         parser.add_argument('--step', type=int, default=[], nargs='+', help='the epoch where optimizer reduce the learning rate')
         parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
