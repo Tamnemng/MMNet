@@ -34,6 +34,12 @@ class REC_Processor(Processor):
         else:
             raise ValueError()
 
+    def save_model(self, name='model'):
+        """Save the model to the work directory."""
+        filename = f'{name}.pt'
+        self.io.save_model(self.model, filename)
+        self.io.print_log(f'Model saved: {filename}')
+
     def adjust_learning_rate(self, epoch, step, base_lr):
         lr = base_lr * (0.1 ** np.sum(epoch >= np.array(step)))
         for param_group in self.optimizer.param_groups:
