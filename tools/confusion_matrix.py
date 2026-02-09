@@ -28,6 +28,8 @@ from torchlight import import_class
 
 def load_model(config_path, weights_path, device):
     """Load model từ config và weights"""
+    from collections import OrderedDict
+    
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
@@ -35,12 +37,52 @@ def load_model(config_path, weights_path, device):
     Model = import_class(config['model'])
     model = Model(**config.get('model_args', {}))
     
-    # Load weights
+    # Load weights - xử lý giống torchlight/io.py
+    print(f"Loading weights from: {weights_path}")
     weights = torch.load(weights_path, map_location=device)
+    
+    # Xử lý nếu weights được wrap trong dict
     if 'model_state_dict' in weights:
-        model.load_state_dict(weights['model_state_dict'])
-    else:
-        model.load_state_dict(weights)
+        weights = weights['model_state_dict']
+    elif 'state_dict' in weights:
+        weights = weights['state_dict']
+    
+    # Xử lý module prefix (từ DataParallel)
+    weights = OrderedDict([
+        [k.split('module.')[-1], v] for k, v in weights.items()
+    ])
+    
+    # Load với strict=False để xử lý partial loading
+    try:
+        model.load_state_dict(weights, strict=True)
+        print("Loaded weights successfully (strict mode)")
+    except RuntimeError as e:
+        print(f"Strict loading failed, trying partial load...")
+        # Lấy state dict hiện tại của model
+        model_state = model.state_dict()
+        
+        # Tìm keys khớp nhau
+        matched_keys = []
+        missing_keys = []
+        unexpected_keys = []
+        
+        for k in model_state.keys():
+            if k in weights:
+                model_state[k] = weights[k]
+                matched_keys.append(k)
+            else:
+                missing_keys.append(k)
+        
+        for k in weights.keys():
+            if k not in model_state:
+                unexpected_keys.append(k)
+        
+        model.load_state_dict(model_state)
+        print(f"Loaded {len(matched_keys)} keys")
+        if missing_keys:
+            print(f"Missing keys (will use pretrained): {missing_keys[:5]}...")
+        if unexpected_keys:
+            print(f"Unexpected keys: {unexpected_keys[:5]}...")
     
     model = model.to(device)
     model.eval()
