@@ -98,18 +98,26 @@ class REC_Processor(Processor):
         self.io.print_log(f'Parameters:\n{str(vars(self.arg))}')
         self.io.print_log(f'Work dir: {self.arg.work_dir}')
         
-        # Thứ tự quan trọng: Load Model -> Load Weights -> Move to GPU -> Load Data -> Load Optimizer
         self.load_model()
         self.load_weights()
-        self.gpu() # Class cha (Processor/IO) sẽ chuyển model & loss sang self.dev tại đây
+        self.gpu() 
         self.load_data()
         self.load_optimizer()
         
         for epoch in range(self.arg.start_epoch, self.arg.num_epoch):
             self.epoch = epoch
             self.train()
+            
             if epoch % self.arg.eval_interval == 0:
                 self.test()
+                # GỌI HÀM LƯU MODEL TẠI ĐÂY
+                # save_model sẽ tự động lưu vào thư mục work_dir được định nghĩa trong file yaml
+                self.save_model(name=f'epoch{epoch+1}_model') 
+                
+                # Nếu muốn lưu model tốt nhất (best model)
+                if self.meta_info['is_best']:
+                    self.save_model(name='best_model')
+                    self.meta_info['is_best'] = False # Reset lại flag
 
     @staticmethod
     def get_parser(add_help=False):
