@@ -53,7 +53,7 @@ class Feeder(Dataset):
         # Lấy thông tin từ data_dict
         info = self.data_dict[index]
         filename = info['file_name']
-        label = int(info['label'])
+        label = int(info['label']) - 1
         
         # Đường dẫn ảnh
         img_path = self.rgb_path + filename + '.png'
