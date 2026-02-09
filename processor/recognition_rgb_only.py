@@ -87,7 +87,9 @@ class REC_Processor(Processor):
         
         predict_label = np.argmax(self.result, axis=1)
         acc = np.sum(predict_label == self.label) / len(self.label)
-        
+        if acc > self.meta_info['best_t1']:
+            self.meta_info['best_t1'] = acc
+            self.meta_info['is_best'] = True
         self.epoch_info['mean_loss'] = np.mean(loss_value)
         self.epoch_info['val_acc'] = acc
         self.io.print_log(f'\tEvaluation Acc: {acc:.2%}')
