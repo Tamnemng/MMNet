@@ -90,14 +90,33 @@ def load_model(config_path, weights_path, device):
     return model, config
 
 
-def load_data(config, split='test'):
-    """Load data feeder"""
-    Feeder = import_class(config['feeder'])
+def load_data(config, split='test', custom_feeder=None, custom_feeder_args=None):
+    """Load data feeder
     
-    if split == 'test':
+    Args:
+        config: Config dict từ yaml file
+        split: 'train' hoặc 'test'
+        custom_feeder: Tên feeder tùy chỉnh (override config)
+        custom_feeder_args: Args cho feeder tùy chỉnh
+    """
+    # Sử dụng custom feeder nếu được chỉ định
+    if custom_feeder:
+        feeder_name = custom_feeder
+    else:
+        feeder_name = config['feeder']
+    
+    Feeder = import_class(feeder_name)
+    
+    # Lấy feeder args
+    if custom_feeder_args:
+        feeder_args = custom_feeder_args
+    elif split == 'test':
         feeder_args = config.get('test_feeder_args', {})
     else:
         feeder_args = config.get('train_feeder_args', {})
+    
+    print(f"Using feeder: {feeder_name}")
+    print(f"Feeder args: {feeder_args}")
     
     dataset = Feeder(**feeder_args)
     
@@ -120,13 +139,22 @@ def evaluate_model(model, data_loader, device):
     
     with torch.no_grad():
         for batch in tqdm(data_loader, desc='Evaluating'):
-            # Xử lý batch - có thể là (data, label) hoặc (skeleton, rgb, label)
-            if len(batch) == 3:
-                skeleton, rgb, label = batch
-                # Model RGB only chỉ dùng RGB
-                data = rgb.float().to(device)
-            elif len(batch) == 2:
+            # Xử lý batch - có thể là nhiều format khác nhau:
+            # - (data, label) - 2 elements
+            # - (rgb, label, filename) - 3 elements từ feeder_rgb_only
+            # - (skeleton, rgb, label) - 3 elements từ feeder_rgb_fused
+            
+            if len(batch) == 2:
                 data, label = batch
+                data = data.float().to(device)
+            elif len(batch) == 3:
+                # Kiểm tra xem element thứ 3 là label (int/tensor) hay filename (string)
+                if isinstance(batch[2], (int, torch.Tensor)) or (isinstance(batch[2], list) and len(batch[2]) > 0 and isinstance(batch[2][0], (int, float))):
+                    # Format: (skeleton, rgb, label) - dùng rgb cho RGB-only model
+                    _, data, label = batch
+                else:
+                    # Format: (rgb, label, filename) từ feeder_rgb_only
+                    data, label, _ = batch
                 data = data.float().to(device)
             else:
                 raise ValueError(f"Unexpected batch format with {len(batch)} elements")
@@ -187,6 +215,14 @@ def main():
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu',
                         help='Device to use (cuda/cpu)')
     
+    # Custom feeder arguments
+    parser.add_argument('--feeder', default=None,
+                        help='Custom feeder class to use (e.g., feeder.feeder_rgb_only.Feeder)')
+    parser.add_argument('--rgb_path', default=None,
+                        help='Path to RGB frames folder (for feeder_rgb_only)')
+    parser.add_argument('--label_path', default=None,
+                        help='Path to label file (for feeder, use "val" or "test" to trigger val mode)')
+    
     args = parser.parse_args()
     
     print(f"Config: {args.config}")
@@ -198,9 +234,23 @@ def main():
     print("\nLoading model...")
     model, config = load_model(args.config, args.weights, args.device)
     
+    # Prepare custom feeder args if specified
+    custom_feeder = args.feeder
+    custom_feeder_args = None
+    
+    if args.feeder:
+        custom_feeder_args = {}
+        if args.rgb_path:
+            custom_feeder_args['rgb_path'] = args.rgb_path
+        if args.label_path:
+            custom_feeder_args['label_path'] = args.label_path
+        else:
+            # Use 'val' or 'test' in label_path to trigger val mode
+            custom_feeder_args['label_path'] = f'{args.split}_label.pkl'
+    
     # Load data
     print(f"\nLoading {args.split} data...")
-    data_loader = load_data(config, args.split)
+    data_loader = load_data(config, args.split, custom_feeder, custom_feeder_args)
     print(f"Total samples: {len(data_loader.dataset)}")
     
     # Evaluate
@@ -211,10 +261,25 @@ def main():
     accuracy = np.mean(y_pred == y_true)
     print(f"\nAccuracy: {accuracy:.2%}")
     
-    # UCLA class names (10 classes)
+    # UCLA class names (10 classes) - labels 1-10 map to indices 0-9
     ucla_classes = [
+        'pick up with one hand',     # label 1 -> index 0
+        'pick up with two hands',    # label 2 -> index 1
+        'drop trash',                # label 3 -> index 2
+        'walk around',               # label 4 -> index 3
+        'sit down',                  # label 5 -> index 4
+        'stand up',                  # label 6 -> index 5
+        'donning',                   # label 7 -> index 6
+        'doffing',                   # label 8 -> index 7
+        'throw',                     # label 9 -> index 8
+        'carry'                      # label 10 -> index 9
+    ]
+    
+    # NTU-RGB+D class names (60 or 120 classes)
+    # UCLA 12 classes (in case labels go from 1-12)
+    ucla_12_classes = [
         'pick up with one hand',
-        'pick up with two hands', 
+        'pick up with two hands',
         'drop trash',
         'walk around',
         'sit down',
@@ -222,13 +287,21 @@ def main():
         'donning',
         'doffing',
         'throw',
-        'carry'
+        'carry',
+        'drinking',
+        'eating'
     ]
     
     # Detect number of classes
     num_classes = config.get('model_args', {}).get('num_class', len(np.unique(y_true)))
-    if num_classes == 10:
+    actual_classes = len(np.unique(y_true))
+    print(f"Number of classes in config: {num_classes}")
+    print(f"Actual unique classes in data: {actual_classes}")
+    
+    if num_classes == 10 or actual_classes == 10:
         class_names = ucla_classes
+    elif num_classes == 12 or actual_classes == 12:
+        class_names = ucla_12_classes
     else:
         class_names = [f'Class {i}' for i in range(num_classes)]
     
@@ -257,3 +330,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
