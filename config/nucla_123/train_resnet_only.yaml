@@ -1,0 +1,29 @@
+work_dir: ./work_dir/nucla_123/resnet_only
+
+# Feeder mới tạo
+feeder: feeder.feeder_rgb_only.Feeder
+train_feeder_args:
+  rgb_path: /duong/dan/den/folder/anh_ST_roi_cua_ban/ 
+  label_path: train
+  random_flip: True
+  temporal_rgb_frames: 5
+
+test_feeder_args:
+  rgb_path: /duong/dan/den/folder/anh_ST_roi_cua_ban/
+  label_path: val
+  temporal_rgb_frames: 5
+
+# Model mới tạo
+model: net.resnet_only.Model
+model_args:
+  num_class: 10
+  pretrained: True
+
+# Training
+device: [0]
+batch_size: 32
+test_batch_size: 32
+base_lr: 0.01
+step: [20, 40]
+num_epoch: 50
+eval_interval: 1
